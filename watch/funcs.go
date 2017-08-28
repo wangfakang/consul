@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"context"
 	"fmt"
 
 	consulapi "github.com/hashicorp/consul/api"
@@ -8,7 +9,7 @@ import (
 
 // watchFactory is a function that can create a new WatchFunc
 // from a parameter configuration
-type watchFactory func(params map[string]interface{}) (WatchFunc, error)
+type watchFactory func(params map[string]interface{}) (WatcherFunc, error)
 
 // watchFuncFactory maps each type to a factory function
 var watchFuncFactory map[string]watchFactory
@@ -26,7 +27,12 @@ func init() {
 }
 
 // keyWatch is used to return a key watching function
-func keyWatch(params map[string]interface{}) (WatchFunc, error) {
+func keyWatch(params map[string]interface{}) (WatcherFunc, error) {
+	stale := false
+	if err := assignValueBool(params, "stale", &stale); err != nil {
+		return nil, err
+	}
+
 	var key string
 	if err := assignValue(params, "key", &key); err != nil {
 		return nil, err
@@ -34,10 +40,10 @@ func keyWatch(params map[string]interface{}) (WatchFunc, error) {
 	if key == "" {
 		return nil, fmt.Errorf("Must specify a single key to watch")
 	}
-
-	fn := func(p *WatchPlan) (uint64, interface{}, error) {
+	fn := func(p *Plan) (uint64, interface{}, error) {
 		kv := p.client.KV()
-		opts := consulapi.QueryOptions{WaitIndex: p.lastIndex}
+		opts := makeQueryOptionsWithContext(p, stale)
+		defer p.cancelFunc()
 		pair, meta, err := kv.Get(key, &opts)
 		if err != nil {
 			return 0, nil, err
@@ -51,7 +57,12 @@ func keyWatch(params map[string]interface{}) (WatchFunc, error) {
 }
 
 // keyPrefixWatch is used to return a key prefix watching function
-func keyPrefixWatch(params map[string]interface{}) (WatchFunc, error) {
+func keyPrefixWatch(params map[string]interface{}) (WatcherFunc, error) {
+	stale := false
+	if err := assignValueBool(params, "stale", &stale); err != nil {
+		return nil, err
+	}
+
 	var prefix string
 	if err := assignValue(params, "prefix", &prefix); err != nil {
 		return nil, err
@@ -59,10 +70,10 @@ func keyPrefixWatch(params map[string]interface{}) (WatchFunc, error) {
 	if prefix == "" {
 		return nil, fmt.Errorf("Must specify a single prefix to watch")
 	}
-
-	fn := func(p *WatchPlan) (uint64, interface{}, error) {
+	fn := func(p *Plan) (uint64, interface{}, error) {
 		kv := p.client.KV()
-		opts := consulapi.QueryOptions{WaitIndex: p.lastIndex}
+		opts := makeQueryOptionsWithContext(p, stale)
+		defer p.cancelFunc()
 		pairs, meta, err := kv.List(prefix, &opts)
 		if err != nil {
 			return 0, nil, err
@@ -73,10 +84,16 @@ func keyPrefixWatch(params map[string]interface{}) (WatchFunc, error) {
 }
 
 // servicesWatch is used to watch the list of available services
-func servicesWatch(params map[string]interface{}) (WatchFunc, error) {
-	fn := func(p *WatchPlan) (uint64, interface{}, error) {
+func servicesWatch(params map[string]interface{}) (WatcherFunc, error) {
+	stale := false
+	if err := assignValueBool(params, "stale", &stale); err != nil {
+		return nil, err
+	}
+
+	fn := func(p *Plan) (uint64, interface{}, error) {
 		catalog := p.client.Catalog()
-		opts := consulapi.QueryOptions{WaitIndex: p.lastIndex}
+		opts := makeQueryOptionsWithContext(p, stale)
+		defer p.cancelFunc()
 		services, meta, err := catalog.Services(&opts)
 		if err != nil {
 			return 0, nil, err
@@ -87,10 +104,16 @@ func servicesWatch(params map[string]interface{}) (WatchFunc, error) {
 }
 
 // nodesWatch is used to watch the list of available nodes
-func nodesWatch(params map[string]interface{}) (WatchFunc, error) {
-	fn := func(p *WatchPlan) (uint64, interface{}, error) {
+func nodesWatch(params map[string]interface{}) (WatcherFunc, error) {
+	stale := false
+	if err := assignValueBool(params, "stale", &stale); err != nil {
+		return nil, err
+	}
+
+	fn := func(p *Plan) (uint64, interface{}, error) {
 		catalog := p.client.Catalog()
-		opts := consulapi.QueryOptions{WaitIndex: p.lastIndex}
+		opts := makeQueryOptionsWithContext(p, stale)
+		defer p.cancelFunc()
 		nodes, meta, err := catalog.Nodes(&opts)
 		if err != nil {
 			return 0, nil, err
@@ -101,7 +124,12 @@ func nodesWatch(params map[string]interface{}) (WatchFunc, error) {
 }
 
 // serviceWatch is used to watch a specific service for changes
-func serviceWatch(params map[string]interface{}) (WatchFunc, error) {
+func serviceWatch(params map[string]interface{}) (WatcherFunc, error) {
+	stale := false
+	if err := assignValueBool(params, "stale", &stale); err != nil {
+		return nil, err
+	}
+
 	var service, tag string
 	if err := assignValue(params, "service", &service); err != nil {
 		return nil, err
@@ -119,9 +147,10 @@ func serviceWatch(params map[string]interface{}) (WatchFunc, error) {
 		return nil, err
 	}
 
-	fn := func(p *WatchPlan) (uint64, interface{}, error) {
+	fn := func(p *Plan) (uint64, interface{}, error) {
 		health := p.client.Health()
-		opts := consulapi.QueryOptions{WaitIndex: p.lastIndex}
+		opts := makeQueryOptionsWithContext(p, stale)
+		defer p.cancelFunc()
 		nodes, meta, err := health.Service(service, tag, passingOnly, &opts)
 		if err != nil {
 			return 0, nil, err
@@ -132,7 +161,12 @@ func serviceWatch(params map[string]interface{}) (WatchFunc, error) {
 }
 
 // checksWatch is used to watch a specific checks in a given state
-func checksWatch(params map[string]interface{}) (WatchFunc, error) {
+func checksWatch(params map[string]interface{}) (WatcherFunc, error) {
+	stale := false
+	if err := assignValueBool(params, "stale", &stale); err != nil {
+		return nil, err
+	}
+
 	var service, state string
 	if err := assignValue(params, "service", &service); err != nil {
 		return nil, err
@@ -147,9 +181,10 @@ func checksWatch(params map[string]interface{}) (WatchFunc, error) {
 		state = "any"
 	}
 
-	fn := func(p *WatchPlan) (uint64, interface{}, error) {
+	fn := func(p *Plan) (uint64, interface{}, error) {
 		health := p.client.Health()
-		opts := consulapi.QueryOptions{WaitIndex: p.lastIndex}
+		opts := makeQueryOptionsWithContext(p, stale)
+		defer p.cancelFunc()
 		var checks []*consulapi.HealthCheck
 		var meta *consulapi.QueryMeta
 		var err error
@@ -167,15 +202,18 @@ func checksWatch(params map[string]interface{}) (WatchFunc, error) {
 }
 
 // eventWatch is used to watch for events, optionally filtering on name
-func eventWatch(params map[string]interface{}) (WatchFunc, error) {
+func eventWatch(params map[string]interface{}) (WatcherFunc, error) {
+	// The stale setting doesn't apply to events.
+
 	var name string
 	if err := assignValue(params, "name", &name); err != nil {
 		return nil, err
 	}
 
-	fn := func(p *WatchPlan) (uint64, interface{}, error) {
+	fn := func(p *Plan) (uint64, interface{}, error) {
 		event := p.client.Event()
-		opts := consulapi.QueryOptions{WaitIndex: p.lastIndex}
+		opts := makeQueryOptionsWithContext(p, false)
+		defer p.cancelFunc()
 		events, meta, err := event.List(name, &opts)
 		if err != nil {
 			return 0, nil, err
@@ -191,4 +229,11 @@ func eventWatch(params map[string]interface{}) (WatchFunc, error) {
 		return meta.LastIndex, events, err
 	}
 	return fn, nil
+}
+
+func makeQueryOptionsWithContext(p *Plan, stale bool) consulapi.QueryOptions {
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancelFunc = cancel
+	opts := consulapi.QueryOptions{AllowStale: stale, WaitIndex: p.lastIndex}
+	return *opts.WithContext(ctx)
 }

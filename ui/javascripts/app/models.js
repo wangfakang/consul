@@ -54,17 +54,13 @@ App.Service = Ember.Object.extend({
   // Boolean of whether or not there are failing checks in the service.
   // This is used to set color backgrounds and so on.
   //
-  hasFailingChecks: function() {
-    return (this.get('failingChecks') > 0);
-  }.property('Checks'),
+  hasFailingChecks: Ember.computed.gt('failingChecks', 0),
 
   //
   // Key used for filtering through an array of this model, i.e s
   // searching
   //
-  filterKey: function() {
-    return this.get('Name');
-  }.property('Name'),
+  filterKey: Ember.computed.alias('Name'),
 });
 
 //
@@ -75,10 +71,13 @@ App.Node = Ember.Object.extend({
   // The number of failing checks within the service.
   //
   failingChecks: function() {
-    var checks = this.get('Checks');
-    // We view both warning and critical as failing
-    return (checks.filterBy('Status', 'critical').get('length') +
-      checks.filterBy('Status', 'warning').get('length'));
+    return this.get('Checks').reduce(function(sum, check) {
+      var status = Ember.get(check, 'Status');
+      // We view both warning and critical as failing
+      return (status === 'critical' || status === 'warning') ?
+        sum + 1 :
+        sum;
+    }, 0);
   }.property('Checks'),
 
   //
@@ -104,26 +103,16 @@ App.Node = Ember.Object.extend({
   // Boolean of whether or not there are failing checks in the service.
   // This is used to set color backgrounds and so on.
   //
-  hasFailingChecks: function() {
-    return (this.get('failingChecks') > 0);
-  }.property('Checks'),
+  hasFailingChecks: Ember.computed.gt('failingChecks', 0),
 
   //
   // The number of services on the node
   //
-  numServices: function() {
-    return (this.get('Services').length);
-  }.property('Services'),
-  // The number of services on the node
-  //
+  numServices: Ember.computed.alias('Services.length'),
 
-  services: function() {
-    return (this.get('Services'));
-  }.property('Services'),
+  services: Ember.computed.alias('Services'),
 
-  filterKey: function() {
-    return this.get('Node');
-  }.property('Node')
+  filterKey: Ember.computed.alias('Node')
 });
 
 
@@ -136,6 +125,8 @@ App.Key = Ember.Object.extend(Ember.Validations.Mixin, {
     Key: { presence: true }
   },
 
+  // Boolean if field should validate JSON
+  validateJson: false,
   // Boolean if the key is valid
   keyValid: Ember.computed.empty('errors.Key'),
   // Boolean if the value is valid
@@ -194,11 +185,32 @@ App.Key = Ember.Object.extend(Ember.Validations.Mixin, {
     if (this.get('Value') === null) {
       return "";
     }
-
+    if (Base64.extendString) {
+      // you have to explicitly extend String.prototype
+      Base64.extendString();
+    }
     // base64 decode the value
-    return window.atob(this.get('Value'));
+    return (this.get('Value').fromBase64());
   }.property('Value'),
 
+  // Check if JSON is valid by attempting a native JSON parse
+  isValidJson: function() {
+    var value;
+
+    try {
+      window.atob(this.get('Value'));
+      value = this.get('valueDecoded');
+    } catch (e) {
+      value = this.get('Value');
+    }
+
+    try {
+      JSON.parse(value);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }.property('Value'),
 
   // An array of the key broken up by the /
   keyParts: function() {
@@ -278,5 +290,3 @@ App.Settings = Ember.Object.extend({
     this.endPropertyChanges();
   }
 });
-
-

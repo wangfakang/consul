@@ -1,12 +1,13 @@
 language: go
 
 go:
-    - tip
+  - 1.8.3
 
 branches:
   only:
     - master
 
-install: make deps
 script:
-    - make test
+  - make test
+
+sudo: false
